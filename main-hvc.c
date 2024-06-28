@@ -474,7 +474,8 @@ run_file (const char *filename, double *reference,
 //             fprintf (outfile, "-> %f\n", time_elapsed_cpu);
         }
         if(nruns > 1) fprintf(outfile, "\n");
-        
+
+        free(times);
 
     }
 

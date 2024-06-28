@@ -5,7 +5,7 @@
 
  ---------------------------------------------------------------------
 
-                        Copyright (c) 2013, 2016, 2017
+                        Copyright (c) 2013, 2016, 2017, 2021
                 Andreia P. Guerreiro <apg@dei.uc.pt>
              
 
@@ -31,7 +31,11 @@
 
  Reference:
 
- [1] A. P. Guerreiro, C. M. Fonseca, “Computing and Updating Hypervolume Contributions in Up to Four Dimensions”, CISUC Technical Report TR-2017-001, University of Coimbra, 2017
+ [1] A. P. Guerreiro and C. M. Fonseca, "Computing and Updating Hypervolume Contributions in Up to
+    Four Dimensions," in IEEE Transactions on Evolutionary Computation, vol. 22, no. 3, pp. 449-463,
+    June 2018, doi: 10.1109/TEVC.2017.2729550.
+ [2] A. P. Guerreiro, C. M. Fonseca, “Computing and Updating Hypervolume Contributions in Up to
+    Four Dimensions”, CISUC Technical Report TR-2017-001, University of Coimbra, 2017
 
 *************************************************************************/ 
 
@@ -54,6 +58,76 @@
 #endif
 
 #define AVL_DEPTH
+
+#define LOG 0
+
+/* ---------------------------------- Print Functions ------------------------------------------*/
+
+static double _x(dlnode_t * p, int di){
+    return (p->x[di] <= -DBL_MAX) ? -12345 : p->x[di];
+}
+
+static void printPointClosest(dlnode_t * list){
+    
+    dlnode_t * p = list;
+    dlnode_t * stop = list->prev[2];
+    p = p->next[2]->next[2];
+    
+    printf("-------------------------------------------------------------------------\n");
+    printf("LIST\n");
+    printf("[id] pointx  pointy  pointz  | ndomr domr-id | cx-id cy-id |   vol  hvol\n");
+    while(p != stop){
+        printf("[%2d] %7.f %7.f %7.f | %5d %7d | %5d %5d | %5.f %5.f\n",
+                p->id,
+                _x(p, 0), _x(p, 1), _x(p, 2),
+                p->ndomr, (p->ndomr > 0) ? p->domr->id : -1,
+                p->closest[0]->id, p->closest[1]->id,
+                p->volume, p->hvolume
+              );
+        p = p->next[2];
+    }
+    printf("-------------------------------------------------------------------------\n");
+}
+
+static void printTree(avl_tree_t * T){
+    
+    avl_node_t * node = T->head;
+    avl_node_t * stop = T->tail;
+    dlnode_t * p;
+    printf("----------------------------------------------------------\n");
+    printf("TREE\n");
+    printf("[id] pointx  pointy  pointz  | ndomr domr-id | cx-id cy-id\n");
+    while(node != stop){
+        p = node->item;
+        printf("[%2d] %7.f %7.f %7.f | %5d %7d | %5d %5d\n",
+                p->id,
+                _x(p, 0), _x(p, 1), _x(p, 2),
+                p->ndomr, (p->ndomr > 0) ? p->domr->id : -1,
+                p->closest[0]->id, p->closest[1]->id);
+        node = node->next;
+    }
+    
+    p = node->item;
+    printf("[%2d] %7.f %7.f %7.f | %5d %7d | %5d %5d\n",
+            p->id,
+            _x(p, 0), _x(p, 1), _x(p, 2),
+            p->ndomr, (p->ndomr > 0) ? p->domr->id : -1,
+            p->closest[0]->id, p->closest[1]->id);
+    
+    printf("----------------------------------------------------------\n");
+}
+
+
+static void printPoint(dlnode_t * p){
+    printf("[%2d] %7.f %7.f %7.f\n",
+            p->id,
+            _x(p, 0), _x(p, 1), _x(p, 2));
+}
+
+
+
+/* ---------------------------------------------------------------------------------------------*/
+
 
 /* ---------------------------------- Auxiliar Functions ---------------------------------------*/
 
@@ -298,7 +372,7 @@ static void setupZandClosest(dlnode_t * list, dlnode_t * new){
 
 
 /**
- * Inserts 'new' in the data structure.
+ * Inserts 'new' in the data structure (only if it is not dominated by more than one point in 'list').
  * (Adds 'new' to the list sorted lexicographically by z, determines its outer
  * delimiters cx and cy (closest[0] and closest[1], respectively) if needed,
  * and updates the outer delimiters of the points previously in the list and
@@ -318,12 +392,13 @@ static void setupZandClosest(dlnode_t * list, dlnode_t * new){
 int addToDataStructure(dlnode_t * list, dlnode_t * new, int determineInsertionPoints){
 
     if(determineInsertionPoints) setupZandClosest(list, new);
+    if(new->ndomr > 1) return 0;
     addToZ(new);
     
     dlnode_t * p = new->next[2];
     dlnode_t * stop = list->prev[2];
     int ndom = 0;
-    int allDelmtrsVisited = 0;
+    int allDelmtrsVisited = new->ndomr;
     while(p != stop && allDelmtrsVisited < 2){ //HVC-ONLY 4D (allDelmtrsVisited < 2 instead of !allDelmtrsVisited)
         
         if(p->x[0] <= new->x[0] && p->x[1] <= new->x[1] && (p->x[0] < new->x[0] || p->x[1] < new->x[1])){
@@ -518,7 +593,11 @@ static inline double *node_point(const avl_node_t *node)
 }
 
 
-int preprocessing(dlnode_t * list){
+
+
+
+//original version
+int preprocessing_ignore_dominated(dlnode_t * list){
 
 
 //     restartListy(list);
@@ -585,6 +664,254 @@ int preprocessing(dlnode_t * list){
     }
     
     
+    avl_free_tree(avltree);
+    return ndom;
+    
+}
+
+
+
+
+static avl_tree_t * alloc_and_init_tree(double * sentinel1, double * sentinel2){
+    
+    //alloc tree
+    avl_tree_t * avltree = avl_alloc_tree ((avl_compare_t) compare_tree_asc_y, NULL);
+    
+    //add a sentinel node
+    avl_node_t * node = malloc(sizeof(avl_node_t));
+    node = avl_init_node(node, sentinel1);
+    avl_insert_top(avltree, node);
+    
+    //add another sentinel
+    avl_node_t * nodeaux = malloc(sizeof(avl_node_t));
+    nodeaux = avl_init_node(nodeaux, sentinel2);
+    
+    avl_insert_before(avltree, node, nodeaux);
+    
+    
+    return avltree;
+}
+
+
+static avl_node_t * next_in_avl(avl_tree_t * avltree, double * x, avl_node_t * nodeaux){
+    double * point;
+    
+    if(avl_search_closest(avltree, x, &nodeaux) == 1)
+    nodeaux = nodeaux->next;
+    point = node_point(nodeaux);
+
+    if(point[1] == x[1] && point[0] <= x[0]){
+        nodeaux = nodeaux->next;
+    }
+
+    return nodeaux;
+}
+
+
+
+int preprocessing(dlnode_t * list){
+    
+//     restartListy(list);
+    
+    dlnode_t * p = list;
+    int ndom = 0;
+    avl_node_t * node;
+    avl_node_t * nodeaux;
+    avl_node_t * tmp;
+    avl_node_t * movetmp;
+    
+    
+    avl_tree_t * avltree = alloc_and_init_tree(p->x, p->next[2]->x);
+#if LOG == 1
+    printTree(avltree);
+#endif
+    p = p->next[2]->next[2];
+    
+
+//     dlnode_t * stop = list->prev[2];
+    dlnode_t * stop = list; //para processar o ultimo sentinela e limpar a arvore
+    double * prev;
+    double * other;
+    
+    while(p != stop){
+#if LOG == 1
+        printf("p: "); printPoint(p);
+#endif
+        
+        node = malloc(sizeof(avl_node_t));
+        node = avl_init_node(node, p->x);
+        node->T = NULL;
+                    
+        nodeaux = next_in_avl(avltree, p->x, nodeaux);
+
+        prev = node_point(nodeaux->prev);
+#if LOG == 1
+        printf("prev:\n"); printPoint(prev);
+#endif
+        if(prev[0] <= p->x[0] && prev[1] <= p->x[1] && prev[2] <= p->x[2]){
+#if LOG == 1
+            printf("\t prev <= p\n");
+#endif
+            //other: the other point that may dominate p
+//             if(prev[0] >= p->x[0])
+//                     other = node_point(nodeaux);
+//             else if(prev[1] == p->x[1])
+//                     other = node_point(nodeaux->prev->prev);
+            if(prev[1] == p->x[1])
+                other = node_point(nodeaux->prev->prev);
+            else
+                other = node_point(nodeaux);
+            
+#if LOG == 1
+            printf("other:\n"); printPoint(other);
+#endif
+            // check if there is another point in avltree that dominates p 
+            // (only happens if one has equal x and another has equal y)
+            if(other[0] <= p->x[0] && other[1] <= p->x[1] && other[2] <= p->x[2]){
+#if LOG == 1
+                printf("\t other <= p\n");
+#endif
+                p->ndomr = 2;
+                free(node);
+            }else{
+                p->ndomr = 1;
+            }
+            
+            avl_node_t * domr = nodeaux->prev;
+            p->domr = domr->item; //HVC-ONLY
+            
+#if LOG == 1
+            printf("DOMR TREE\n");
+            printTree(domr->T);
+#endif
+            
+#if LOG == 1
+            printf("set default cx and cy\n");
+#endif
+            //set default cx and cy (may need fixing, depending on nodeaux->T)
+            p->closest[0] = domr->prev->item;
+            p->closest[1] = domr->next->item;
+            
+            if(p->ndomr == 1){
+                //update domr->T (lazy version)
+                
+#if LOG == 1
+                printf("trim domr->T cx\n");
+#endif
+                //fazer trim de prev->T (cx)
+                tmp = domr->T->head->next;
+                double * cx = node_point(domr->prev);
+                while(cx[0] <= node_point(tmp)[0]){
+                    tmp = tmp->next;
+//                     avl_free_tree(tmp->prev->T); //nao tem T, por ser dominado
+                    avl_delete_node(domr->T, tmp->prev);
+                }
+                domr->T->head->item = domr->prev->item;
+
+                
+#if LOG == 1
+                printf("trim domr->T cy\n");
+#endif
+                //fazer trim de prev->T (cy)
+                tmp = domr->T->tail->prev;
+                double * cy = node_point(domr->next);
+                while(cy[1] <= node_point(tmp)[1]){
+                    tmp = tmp->prev;
+//                     avl_free_tree(tmp->next->T);
+                    avl_delete_node(domr->T, tmp->next);
+                }
+                domr->T->tail->item = domr->next->item;
+
+                
+                //verificar se prev->T <= p
+                nodeaux = next_in_avl(domr->T, p->x, nodeaux);
+                other = node_point(nodeaux->prev);
+#if LOG == 1
+                printf("other2: "); printPoint(other);
+#endif
+                if(other[0] <= p->x[0] && other[1] <= p->x[1] && other[2] <= p->x[2]){
+#if LOG == 1
+                    printf("\t other2 <= p\n");
+#endif
+                    p->ndomr = 2;
+                    free(node);
+                }else{
+                    //remove points in prev->T dominated by p
+                    tmp = nodeaux;
+                    while(p->x[0] <= node_point(tmp)[0]){
+#if LOG == 1
+                        printf("delete: "); printPoint(node_point(tmp));
+#endif
+                        tmp = tmp->next;
+    //                     avl_free_tree(tmp->next->T);
+                        avl_delete_node(domr->T, tmp->prev);
+                    }
+                    //fix cx and cy
+                    p->closest[0] = tmp->prev->item;
+                    p->closest[1] = tmp->item;
+                    
+                    avl_insert_before(domr->T, tmp, node);
+                    node->T = NULL;
+                        
+#if LOG == 1
+                    printf("DOMR TREE after p's insertion\n");
+                    printTree(domr->T);
+#endif
+                }
+                
+            }
+            ndom++;
+
+            
+        }else{
+#if LOG == 1
+            printf("\tp is nondominated\n");
+#endif
+            //create list (tree) of delimiters of the contribution of p (with fake outer delimiters)
+            node->T = alloc_and_init_tree(p->x, p->x);
+            tmp = node->T->head;
+            
+            while(node_point(nodeaux)[0] >= p->x[0]){
+                
+#if LOG == 1
+                printf("\t unlink node tmp from avltree\n");
+#endif
+                //remove nodeaux->prev from main tree (of nondominated points, avltree)
+                movetmp = nodeaux;
+                nodeaux = nodeaux->next;
+                avl_unlink_node(avltree, movetmp);           
+
+#if LOG == 1
+                printf("\t link to node(p)->T\n");                
+#endif
+                //add to node->T the node removed from the avltree
+                avl_insert_after(node->T, tmp, movetmp);
+                tmp = movetmp;
+
+                    
+                //free tmp->T (they are dominated in (x,y)-space by two points)
+                avl_free_tree(tmp->T);
+            }
+            
+            avl_insert_before(avltree, nodeaux, node);
+            
+            //fix head and tail of node->T (must be p's cx and cy)
+            node->T->head->item = node->prev->item;
+            node->T->tail->item = node->next->item;
+            
+            //add node to avltree and set cx and cy
+            p->closest[0] = node->prev->item;
+            p->closest[1] = node->next->item;
+            
+        }
+        p = p->next[2];
+        
+#if LOG == 1
+        printTree(avltree);
+#endif
+    }
+    
+    avl_free_tree(avltree->head->next->T); //sentinel's tree
     avl_free_tree(avltree);
     return ndom;
     
@@ -1619,6 +1946,51 @@ double hv3dplus(dlnode_t * list){
 
 
 
+double updateDominator(dlnode_t * new, int adding){
+    dlnode_t * domr = new->domr;
+    double factor = (adding) ? -1 : 1;
+    
+    new->cnext[0] = new->closest[0];
+    new->cnext[1] = new->closest[1];
+    
+    new->head[1] = new->closest[0]->cnext[1];
+    if(new->head[1] == new->domr)
+        new->head[1] = new->domr->head[1];
+    new->head[0] = new->closest[1]->cnext[0];
+    if(new->head[0] == new->domr)
+        new->head[0] = new->domr->head[0];
+    new->lastSlicez = new->x[2];
+    
+    
+    new->volume = 0;
+#if LOG == 1        
+    printf("cx-id: %d, cy-id: %d, head1: %d\n", new->closest[0]->id, new->closest[1]->id, new->head[1]->id);
+#endif
+    new->area = computeArea(new->x, 1, new->closest[0], new->head[1], new->closest[1]);
+    
+#if LOG == 1        
+    printf("new->area: %f\n", new->area);
+#endif
+    double volume = new->volume;
+    new->volume = 0;
+    
+    new->lastSlicez = new->x[2];
+    incrementSlicing(new, new->next[2]);
+#if LOG == 1        
+    printf("volume to remove: %f\n", new->volume);
+#endif
+    domr->volume = domr->volume + factor * new->volume;
+    new->volume = volume;
+    
+#if LOG == 1        
+    printf("new [%d] %f\n", new->id, new->volume);
+    printf("domr [%d] %f\n", domr->id, domr->volume);
+#endif
+    
+    return new->volume;
+}
+    
+
 
 double updateContributions(dlnode_t * list, dlnode_t * new, int adding){
     dlnode_t * p;
@@ -1629,6 +2001,16 @@ double updateContributions(dlnode_t * list, dlnode_t * new, int adding){
     }else{
         restartContributionsBase(list, new->prev[2]->next[2]); //so it works even when new is not in list z
     }
+#if LOG == 1
+    printf("updateContributions - new->ndomr: %d\n", new->ndomr); 
+#endif
+    
+    if(new->ndomr >= 2){
+        return 0;
+    }else if(new->ndomr == 1){
+        return updateDominator(new, adding);
+    }
+    
     
     new->cnext[0] = new->closest[0];
     new->cnext[1] = new->closest[1];
@@ -1644,7 +2026,6 @@ double updateContributions(dlnode_t * list, dlnode_t * new, int adding){
     p = new->next[2];
     
 
-    
     double factor = (adding) ? -1 : 1;
     dlnode_t * domr;
     
@@ -1714,18 +2095,38 @@ double updateContributions(dlnode_t * list, dlnode_t * new, int adding){
         p = p->next[2];
     }
     
+#if LOG == 1        
+        printf("new: "); printPoint(new);
+        printf("p: "); printPoint(p);
+#endif
+    
     updateVolume(new, p->x[2]);
     
     dlnode_t * q = new->cnext[0];
     while(q->x[0] >= new->x[0]){
         updateVolume(q, p->x[2]);
         q->volume = q->oldvolume + factor * q->volume;
+#if LOG == 1        
+        printf("1[%d] %f\n", q->id, q->volume);
+#endif
         q = q->cnext[1];
     }
     updateVolume(q, p->x[2]);
     if(q->x[2] != DBL_MAX){
+#if LOG == 1        
+        printf("2[%d] %f = %f + %f\n", q->id, q->oldvolume + factor * q->volume, q->oldvolume, factor * q->volume);
+#endif
         q->volume = q->oldvolume + factor * q->volume;
+#if LOG == 1        
+        printf("2[%d] %f\n", q->id, q->volume);
+#endif
     }
+    
+#if LOG == 1       
+    printf("updateContributions before incrementSlicing\n");
+    printPointClosest(list);
+#endif
+    
     
     if(p->next[2] != list){
         double volume = new->volume;
@@ -1733,10 +2134,17 @@ double updateContributions(dlnode_t * list, dlnode_t * new, int adding){
         
         new->lastSlicez = p->x[2];
         incrementSlicing(new, p->next[2]);
+#if LOG == 1       
+    printf("p->volume: %.0f, factor: %.0f, new->volume: %.0f\n", p->volume, factor, new->volume);
+    printPointClosest(list);
+#endif        
+        
         p->volume = p->volume + factor * new->volume;
         new->volume = volume;
     }
-
+#if LOG == 1        
+    printf("new [%d] %f\n", new->id, new->volume);
+#endif
     return new->volume;
 }
     
@@ -1762,6 +2170,7 @@ double hvc4dU(dlnode_t * list){
         
         updateContributions(list, new, adding);
         knowInsertionPoints = 1; //insertion points (prev[2]/next[2] and closest[?]) are setup up in updateContributions
+//         if(new->ndomr < 2)
         addToDataStructure(list, new, !knowInsertionPoints);
         
         //if(new->ndomr == 1) new->ndomr = 2;
@@ -1774,6 +2183,11 @@ double hvc4dU(dlnode_t * list){
         height = new->next[3]->x[3] - new->x[3];
         hv += volume * height;                // update hypervolume in d=4
         new = new->next[3];
+
+#if LOG == 1        
+        printPointClosest(list);
+#endif
+
     }
         
     return hv;
@@ -1836,7 +2250,15 @@ double hvc(double *data, int d, int n, double *ref, double * contribs, int recom
     }else if(d == 3){
         
         preprocessing(list);
-        int considerDominated = 0;
+//         preprocessing_ignore_dominated(list);
+
+#if LOG == 1        
+        printPointClosest(list); //testing only
+#endif
+
+        
+//         int considerDominated = 0;
+        int considerDominated = 1;
         hv = hvc3d(list, considerDominated);
         
     }else if(d == 4){

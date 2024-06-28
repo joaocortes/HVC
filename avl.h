@@ -49,6 +49,7 @@ typedef int (*avl_compare_t)(const void *, const void *);
  */
 typedef void (*avl_freeitem_t)(void *);
 
+struct avl_tree_t;
 typedef struct avl_node_t {
 	struct avl_node_t *next;
 	struct avl_node_t *prev;
@@ -56,27 +57,14 @@ typedef struct avl_node_t {
 	struct avl_node_t *left;
 	struct avl_node_t *right;
 	void *item;
+    struct avl_tree_t *T; //for HVC preprocessing step
 #ifdef AVL_COUNT
 	unsigned int count;
 #endif
 #ifdef AVL_DEPTH
 	unsigned char depth;
 #endif
-    /* The following members are necessary only to determine the attainment indicators.
-     * set - set of the input point responsible for the promotion of this point
-     * promoter - point from a lower (previous) level that is also responsible for the promotion of this point.
-     * remover - point from the same level as this point that dominates this point. (Point
-     *          that removed this point from its level).
-     * equal - point from a higher (next) level that is equal to this point (this point is equal's promoter)
-     * 
-     * This point is attained by 'set' and by the same sets that attains its promoter. It is also
-     * attained by any set that attains its remover. It is also attained by every set that attains
-     * any point equal to itself.
-     */
-    int set;
-    struct avl_node_t *promoter;
-    struct avl_node_t *remover;
-    struct avl_node_t *equal;
+
 } avl_node_t;
 
 typedef struct avl_tree_t {
